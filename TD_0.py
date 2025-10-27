@@ -26,18 +26,18 @@ class Env():
         self.v = np.zeros(gridSize)
         self.gamma = 0.9
         self.delta_thresh = 0.0001
-        self.q_table = np.zeros(gridSize+[self.n_actions], dtype=np.float32)
+        self.eps = 0.5
         self.n_eplisode = 1000
-        self.eps = 0.1
         self.alpha = 0.1
-
+        self.visit = np.zeros(gridSize, dtype=np.int32)
+    
 
     def check_terminal(self, pos):
         if pos in self.dst_pos:
             return True
         else:
             return False
-    
+        
 
     def init_P(self):
         P = {}
@@ -56,75 +56,57 @@ class Env():
                         else:
                             P[(i, j, k)] = (next_i, next_j, self.step_reward)
         return P
-    
-    def gen_action(self, i, j):
-        if np.random.uniform() < self.eps:#小概率
-            a = np.random.randint(0, self.n_actions)
-        else:
-            a = self.q_table[i, j].argmax()
-        return a
-
-    def get_policy(self):
-        return self.q_table.argmax(-1)
-
-    def gen_v(self):
-        for i in range(self.m):
-            for j in range(self.n):
-                self.v[i, j] = self.q_table[i, j].max()
-        return self.v
-    
-    
-
-
-
-    def visualize_policy(self):
-        best_policy = self.q_table.argmax(-1)
-        grid_display = np.full((self.m, self.n), '', dtype=object)
-        arrow_dict = {0: "↑", 1: "↓", 2: "←", 3: "→"}
-
-        for i in range(self.m):
-            for j in range(self.n):
-                if [i,j] in self.dst_pos:
-                    grid_display[i,j] = '★'
-                elif [i,j] in self.zhangai_pos:
-                    grid_display[i,j] = '■'
-                else:
-                    grid_display[i,j] = arrow_dict[best_policy[i,j]]
-
-        print("Policy Grid (★目标, ■障碍):")
-        for row in grid_display:
-            print(' '.join(row))
-                
-
 
     def sarsa_iter(self):
         for t in range(self.n_eplisode):
-            print(f"第{t}条轨迹")
-            i, j = 0, 0
+            print(f"这是第{t}条轨迹")
+            self.eps -= t//10
+            self.eps = max(0.1, self.eps)
+            i, j  = 0, 0
             while True:
-                i, j = np.random.randint(0, self.n), np.random.randint(0, self.n)
+                i, j = np.random.randint(0, self.m-1),  np.random.randint(0, self.n-1)
                 if self.check_terminal([i, j]):
                     continue
                 else:
                     break
-            while True:
-                a = self.gen_action(i, j)
+
+            done  = False
+            while not done:
+                self.visit[i, j] += 1
+                if np.random.uniform() < self.eps:#小概率
+                    a = np.random.randint(0, self.n_actions-1)
+                else:
+                    new_v = []
+                    for k in range(self.n_actions):
+                        next_i, next_j, r = self.P[(i, j, k)]
+                        new_v.append(r + self.gamma*self.v[next_i, next_j])
+                    a = np.asarray(new_v).argmax()
                 next_i, next_j, r = self.P[(i, j, a)]
-                if self.check_terminal([next_i, next_j]):
-                    self.q_table[i, j, a] += self.alpha *(r - self.q_table[i, j, a])
-                    break
-                next_a = self.gen_action(next_i, next_j)
-                self.q_table[i, j, a] += self.alpha *(r + self.gamma * self.q_table[next_i, next_j, next_a] - self.q_table[i, j, a])
+                self.v[i, j] += self.alpha * (r + self.gamma*self.v[next_i, next_j] - self.v[i, j])
                 i, j = next_i, next_j
+                if self.check_terminal([i, j]):
+                    done = True
 
-
-        # 迭代完成
-        best_policy = self.q_table.argmax(-1)
+        
+        best_policy = np.zeros(self.gridSize)
+        for i in range(self.m):
+            for j in range(self.n):
+                new_v = []
+                for k in range(self.n_actions):
+                    next_i, next_j, r = self.P[(i, j, k)]
+                    new_v.append(r+self.gamma*self.v[next_i, next_j])
+                best_policy[i, j] = np.asarray(new_v).argmax()
         arrow_dict = {0: "↑", 1: "↓", 2: "←", 3: "→"}
         arr_arrow = np.vectorize(arrow_dict.get)(best_policy)
         print(f"best_policy:\n")
         print(arr_arrow)
-        self.visualize_policy()
+        print(self.v)
+        print("self.visit")
+        print(self.visit)
+
+
+
+
 
             
 def main():
