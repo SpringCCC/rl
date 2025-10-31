@@ -51,10 +51,19 @@ class Env():
 
 
     def reset(self):
-        self.agent_pos = [0, 0]
+        while True:
+            r = np.random.randint(self.n_row)
+            c = np.random.randint(self.n_row)
+            self.agent_pos = [r, c]
+            if self.check_terminal(self.agent_pos):
+                continue
+            else:
+                break
 
-    def check_done(self):
-        pass
+    def check_terminal(self, pos):
+        if pos in self.dst_pos:
+            return True
+        return False
     
 
     def visual_policy(self, best_policy):
