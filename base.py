@@ -1,6 +1,20 @@
 
 import numpy as np
+import torch
 
+
+def toNumpy(a):
+    if isinstance(a, torch.Tensor):
+        return a.detach().cpu().numpy()
+    
+    
+    
+def totensor(r, device=torch.device("cuda:0"), dtype=torch.float32):
+    if isinstance(r, np.ndarray):
+        return torch.from_numpy(r).to(device=device, dtype=dtype)
+    if isinstance(r, list) or isinstance(r, tuple):
+        return torch.from_numpy(np.asarray(r)).to(device=device, dtype=dtype)
+    return torch.tensor([r], dtype=dtype).to(device)
 
 
 class Env():
