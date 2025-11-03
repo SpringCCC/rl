@@ -4,6 +4,8 @@ import torch.nn as nn
 import random
 from base import *
 import torch.nn.functional as F
+from springc_utils import *
+
 
 device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
 
@@ -27,21 +29,20 @@ class A2CNet(nn.Module):
         return policy, value
     
     
-    
 class A2C(BaseAgent):
     
     def __init__(self, env:Env):
         super().__init__(env)
-        self.gamma = 0.92
-        self.lamb = 0.98
+        self.gamma = 0.9
+        self.lamb = 0.9
         self.net = A2CNet(env)
         self.net.to(device=device)
-        self.n_episode = 5000
+        self.n_episode = 10000
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=1e-3)
         self.max_dis = 100
         self.value_loss_w = 0.5
         self.entropy_loss_w = 0.1
-        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.n_episode, eta_min=1e-4)
+        self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.n_episode, eta_min=1e-5)
         
     def take_action(self, r, c):
         # self.net.eval()
@@ -59,10 +60,10 @@ class A2C(BaseAgent):
         r, c = list(zip(*res))[:2]
         ps, vs = self.net(r, c)
         vs[-1] = vs[-1] * (1-done)
-        returns = vs[-1] 
+        returns = vs[-1:]
         for i in reversed(range(len(res)-1)):
             _, _, reward, a = res[i]
-            delta = reward + self.gamma * vs[i+1] - vs[i]
+            delta = reward + self.gamma * vs[i+1:i+2] - vs[i:i+1]
             
             advantage = delta + self.gamma * self.lamb * advantage
             returns = reward + self.gamma * returns
@@ -70,6 +71,8 @@ class A2C(BaseAgent):
             actions[i] = a
         return map(lambda x:torch.cat(x, dim=0), zip(*out)), actions
     
+
+    @sc_timing_consume()   
     def train_A2C(self):
         self.net.train()
         for i_episode in range(self.n_episode):

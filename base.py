@@ -27,7 +27,7 @@ class Env():
         self.action = {0:[-1, 0], 1:[1, 0], 2:[0, -1], 3:[0, 1]}
         self.r_step = -1
         self.r_dst = 10
-        self.r_obstacle = -5
+        self.r_obstacle = -100
         self.init_env()
         self.create_P()
         self.reset()

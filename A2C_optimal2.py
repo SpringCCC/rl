@@ -28,20 +28,20 @@ class A2CNet(nn.Module):
         return policy, value
     
     
-@sc_timing_consume()
+
 class A2C(BaseAgent):
     
     def __init__(self, env:Env):
         super().__init__(env)
         self.gamma = 0.9
-        self.lamb = 0.8
+        self.lamb = 0.9
         self.net = A2CNet(env)
         self.net.to(device=device)
         self.n_episode = 10000
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=1e-3)
-        self.max_dis = 100
+        self.max_dis = 50
         self.value_loss_w = 0.5
-        self.entropy_loss_w = 0.1
+        self.entropy_loss_w = 0.01
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.n_episode, eta_min=1e-4)
         
     def take_action(self, r, c):
@@ -50,7 +50,7 @@ class A2C(BaseAgent):
         action_dist = torch.distributions.Categorical(logits=policy)
         a = action_dist.sample()
         # self.net.train()
-        return a.item()
+        return a.item(), policy, value
     
     def processInfo(self, res):
         out = [None] * (len(res) - 1)
@@ -68,6 +68,7 @@ class A2C(BaseAgent):
             actions[i] =a
         return map(lambda x:torch.cat(x, dim=0), zip(*out)), actions
     
+    @sc_timing_consume()
     def train_A2C(self):
         self.net.train()
         for i_episode in range(self.n_episode):
@@ -78,9 +79,9 @@ class A2C(BaseAgent):
             res = []
             dis = 0
             while not done:
-                a = self.take_action(r, c)
+                a, p, v = self.take_action(r, c)
                 nr, nc, reward, done = self.env.P[(r, c, a)]
-                p, v = self.net(r, c)
+                # p, v = self.net(r, c)
                 res.append([reward, a, p, v])
                 r, c = nr, nc
                 dis += 1
@@ -102,10 +103,10 @@ class A2C(BaseAgent):
             entropy_loss = (probs * log_prob).sum()
             loss = policy_loss + self.value_loss_w * value_loss + self.entropy_loss_w * entropy_loss
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.net.parameters(), 1)
+            torch.nn.utils.clip_grad_norm_(self.net.parameters(), 10)
             self.optimizer.step()
             self.scheduler.step()
-            if i_episode % 50==0:
+            if i_episode % 500==0:
                 print(f"{i_episode=}")
                 self.env.visual_policy(self.get_policy())
         print("final policy:")
