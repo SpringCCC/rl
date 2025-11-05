@@ -42,7 +42,7 @@ class A2C(BaseAgent):
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=1e-3)
         self.max_dis = 50
         self.value_loss_w = 0.5
-        self.entropy_loss_w = 0.01
+        self.entropy_loss_w = 1
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.n_episode, eta_min=1e-4)
         
     def take_action(self, r, c):
@@ -94,25 +94,19 @@ class A2C(BaseAgent):
             log_prob = F.log_softmax(p, dim=-1)
             log_prob_a = log_prob.gather(1, a.detach().reshape(-1, 1))
             
-            # policy_loss = (- log_prob_a * advantage.detach()).mean()
-            # value_loss = (0.5 * ((v-returns.detach())**2)).mean()
-            # entropy_loss = (probs * log_prob).mean()
-
             policy_loss = (- log_prob_a * advantage.detach()).sum()
             value_loss = (0.5 * ((v-returns.detach())**2)).sum()
             entropy_loss = (probs * log_prob).sum()
-
-
-            # loss = policy_loss + self.value_loss_w * value_loss + self.entropy_loss_w * entropy_loss
-            loss = policy_loss + self.value_loss_w * value_loss
+            
+            loss = policy_loss + self.value_loss_w * value_loss + self.entropy_loss_w * entropy_loss
             self.optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.net.parameters(), 1)
             self.optimizer.step()
             self.scheduler.step()
-            # if i_episode % 500==0:
-            #     print(f"{i_episode=}")
-            #     self.env.visual_policy(self.get_policy())
+            if i_episode % 500==0:
+                print(f"{i_episode=}")
+                self.env.visual_policy(self.get_policy())
         print("final policy:")
         self.env.visual_policy(self.get_policy())
     
