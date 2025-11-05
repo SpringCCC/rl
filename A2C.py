@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from springc_utils import *
 
 device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+setup_logging()
 
 class A2CNet(nn.Module):
     
@@ -34,12 +35,12 @@ class A2C(BaseAgent):
     def __init__(self, env:Env):
         super().__init__(env)
         self.gamma = 0.9
-        self.lamb = 0.8
+        self.lamb = 0.95
         self.net = A2CNet(env)
         self.net.to(device=device)
         self.n_episode = 10000
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=1e-3)
-        self.max_dis = 100
+        self.max_dis = 50
         self.value_loss_w = 0.5
         self.entropy_loss_w = 0.1
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.n_episode, eta_min=1e-4)
@@ -61,7 +62,6 @@ class A2C(BaseAgent):
             next_value = res[i+1][-1]
             reward, a, p, v = res[i]
             delta = reward + self.gamma * next_value - v
-            
             advantage = delta + self.gamma * self.lamb * advantage
             returns = reward + self.gamma * returns
             out[i] = p, v, returns, advantage
@@ -69,7 +69,6 @@ class A2C(BaseAgent):
         return map(lambda x:torch.cat(x, dim=0), zip(*out)), actions
     
     def train_A2C(self):
-        self.net.train()
         for i_episode in range(self.n_episode):
             self.env.reset()
             self.optimizer.zero_grad()
@@ -77,6 +76,7 @@ class A2C(BaseAgent):
             done = False
             res = []
             dis = 0
+            self.net.train()
             while not done:
                 a = self.take_action(r, c)
                 nr, nc, reward, done = self.env.P[(r, c, a)]
@@ -105,10 +105,10 @@ class A2C(BaseAgent):
             torch.nn.utils.clip_grad_norm_(self.net.parameters(), 1)
             self.optimizer.step()
             self.scheduler.step()
-            if i_episode % 50==0:
-                print(f"{i_episode=}")
-                self.env.visual_policy(self.get_policy())
-        print("final policy:")
+            # if i_episode % 50==0:
+            #     print(f"{i_episode=}")
+            #     self.env.visual_policy(self.get_policy())
+        # print("final policy:")
         self.env.visual_policy(self.get_policy())
     
     def get_policy(self):
@@ -126,4 +126,10 @@ def main():
     agent.train_A2C()
 
 
-main()
+def loop():
+    for i in range(100):
+        msg = f"第{i}次循环loop"
+        logging.info(msg)
+        main()
+
+loop()

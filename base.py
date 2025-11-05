@@ -1,7 +1,7 @@
 
 import numpy as np
 import torch
-
+import logging
 
 def toNumpy(a):
     if isinstance(a, torch.Tensor):
@@ -10,6 +10,8 @@ def toNumpy(a):
     
     
 def totensor(r, device=torch.device("cuda:0"), dtype=torch.float32):
+    if isinstance(r, torch.Tensor):
+        return r.to(device)
     if isinstance(r, np.ndarray):
         return torch.from_numpy(r).to(device=device, dtype=dtype)
     if isinstance(r, list) or isinstance(r, tuple):
@@ -64,15 +66,37 @@ class Env():
                     self.P[(r,c,a)] = (nr, nc, reward, done)
 
 
-    def reset(self):
-        while True:
-            r = np.random.randint(self.n_row)
-            c = np.random.randint(self.n_row)
-            self.agent_pos = [r, c]
-            if self.check_terminal(self.agent_pos):
-                continue
-            else:
-                break
+    def reset(self, v=None):
+        # self.agent_pos = [2, 1]
+        if v is None:
+            while True:
+                r = np.random.randint(self.n_row)
+                c = np.random.randint(self.n_row)
+                self.agent_pos = [r, c]
+                if self.check_terminal(self.agent_pos):
+                    continue
+                else:
+                    break
+        # else:
+        #     v = totensor(v)
+        #     # v *= 0
+        #     min_val = torch.min(v)
+        #     min_pos = torch.nonzero(v == min_val, as_tuple=False)[0]
+        #     r, c = min_pos[0].item(), min_pos[1].item()
+        #     self.agent_pos = [r, c]
+        #     if self.check_terminal(self.agent_pos):
+        #         while True:
+        #             r = np.random.randint(self.n_row)
+        #             c = np.random.randint(self.n_row)
+        #             self.agent_pos = [r, c]
+        #             if self.check_terminal(self.agent_pos):
+        #                 continue
+        #             else:
+        #                 break
+            
+
+
+
 
     def check_terminal(self, pos):
         if pos in self.dst_pos:
@@ -90,6 +114,7 @@ class Env():
             arr_arrow[zr, zc] = "■"     # X 表示障碍
         print(f"best_policy:\n")
         print(arr_arrow)
+        logging.info(f"\n{arr_arrow}")
 
 
 class BaseAgent():
