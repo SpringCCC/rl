@@ -42,7 +42,7 @@ class A2C(BaseAgent):
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=1e-3)
         self.max_dis = 50
         self.value_loss_w = 0.5
-        self.entropy_loss_w = 0.01
+        self.entropy_loss_w = 1
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.n_episode, eta_min=1e-4)
 
         self.n_epochs_episode = 5
@@ -102,7 +102,7 @@ class A2C(BaseAgent):
             transition_dict = self.processInfo(res)
             r, c, actions, returns, advantage = transition_dict['r'], transition_dict['c'], transition_dict['actions'], transition_dict['returns'], transition_dict['advantage']
             actions, returns, advantage = self._totensor_rcara([actions, returns, advantage], True)
-
+            advantage = advantage.detach()
             log_prob_a_old = F.log_softmax(self.net(r, c)[0], dim=-1).gather(1, actions).detach()
 
             for _ in range(self.n_epochs_episode):
@@ -110,22 +110,23 @@ class A2C(BaseAgent):
                 prob = F.softmax(policy, dim=-1)
                 log_prob = F.log_softmax(policy, dim=-1)
                 log_prob_a = F.log_softmax(policy, dim=-1).gather(1, actions)
-                ratio = torch.exp(log_prob_a - log_prob_a_old)
+                ratio = torch.exp(log_prob_a - log_prob_a_old.detach())
                 surr1 = ratio * advantage
                 surr2 = torch.clamp(ratio, 1 - self.ppo_eps, 1 + self.ppo_eps) * advantage  # 截断
                 policy_loss = torch.mean(-torch.min(surr1, surr2))
-                value_loss = torch.mean(F.mse_loss(value, returns.detach()))
+                value_loss = F.mse_loss(value, returns.detach())
                 entropy_loss = (prob * log_prob).mean()
-                # loss = policy_loss + self.value_loss_w * value_loss + self.entropy_loss_w * entropy_loss
-                loss = policy_loss + self.value_loss_w * value_loss
+                loss = policy_loss + self.value_loss_w * value_loss + self.entropy_loss_w * entropy_loss
                 self.optimizer.zero_grad()
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.net.parameters(), 1)
+                
                 self.optimizer.step()
-                self.scheduler.step()
+            self.scheduler.step()
         
-            if i_episode % 100==0:
-                print(f"{i_episode=}")
-                self.env.visual_policy(self.get_policy())
+            # if i_episode % 100==0:
+            #     print(f"{i_episode=}")
+            #     self.env.visual_policy(self.get_policy())
         print("final policy:")
         self.env.visual_policy(self.get_policy())
     
