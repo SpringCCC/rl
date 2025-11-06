@@ -11,7 +11,7 @@ setup_logging()
 
 class A2CNet(nn.Module):
     
-    def __init__(self, env:Env, hidden_dim=32):
+    def __init__(self, env:Env, hidden_dim=16):
         super(A2CNet, self).__init__()
         self.row_embed = nn.Embedding(env.n_row, hidden_dim)
         self.col_embed = nn.Embedding(env.n_col, hidden_dim)
@@ -44,6 +44,9 @@ class A2C(BaseAgent):
         self.value_loss_w = 0.5
         self.entropy_loss_w = 1
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.n_episode, eta_min=1e-4)
+
+        self.n_epochs_episode = 5
+        self.ppo_eps = 0.2
         
     def take_action(self, r, c):
         policy, value = self.net(r, c)
@@ -52,20 +55,31 @@ class A2C(BaseAgent):
         return a.item(), policy, value
     
     def processInfo(self, res):
-        out = [None] * (len(res) - 1)
         advantage = 0
         returns = res[-1][-1]
-        actions = [None] * (len(res) - 1)
+        transition_dict = {'r': [], 'c':[], 'actions': [], 'returns': [], 'advantage': []}
         for i in reversed(range(len(res)-1)):
             next_value = res[i+1][-1]
-            reward, a, p, v = res[i]
+            r, c, reward, a, p, v = res[i]
             delta = reward + self.gamma * next_value - v
-            
             advantage = delta + self.gamma * self.lamb * advantage
             returns = reward + self.gamma * returns
-            out[i] = p, v, returns, advantage
-            actions[i] =a
-        return map(lambda x:torch.cat(x, dim=0), zip(*out)), actions
+            
+            transition_dict['r'].insert(0, r)
+            transition_dict['c'].insert(0, c)
+            transition_dict['actions'].insert(0, a)
+            transition_dict['returns'].insert(0, returns)
+            transition_dict['advantage'].insert(0, advantage)
+        return transition_dict
+    
+    def _totensor_rcara(self, a, is_loop=False):
+        if is_loop:
+            res = []
+            for k in a:
+                res.append(torch.tensor(k).reshape(-1, 1).to(device))
+            return res
+        else:
+            return torch.tensor(a).reshape(-1, 1).to(device)
     
     @sc_timing_consume()
     def train_A2C(self):
@@ -78,35 +92,39 @@ class A2C(BaseAgent):
             while not done:
                 a, p, v = self.take_action(r, c)
                 nr, nc, reward, done = self.env.P[(r, c, a)]
-                res.append([reward, a, p, v])
+                res.append([r, c, reward, a, p, v])
                 r, c = nr, nc
                 dis += 1
                 if dis>self.max_dis:
                     break
             p, v = self.net(r, c)
-            res.append([None, None, None, v*(1-done)])
-            (p, v, returns, advantage), a = self.processInfo(res)
-            # if advantage.numel() > 1:
-            #     advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
+            res.append([r, c, None, None, None, v*(1-done)])
+            transition_dict = self.processInfo(res)
+            r, c, actions, returns, advantage = transition_dict['r'], transition_dict['c'], transition_dict['actions'], transition_dict['returns'], transition_dict['advantage']
+            actions, returns, advantage = self._totensor_rcara([actions, returns, advantage], True)
 
-            a = totensor(a, dtype=torch.long)
-            probs = F.softmax(p, dim=-1)
-            log_prob = F.log_softmax(p, dim=-1)
-            log_prob_a = log_prob.gather(1, a.detach().reshape(-1, 1))
-            
-            policy_loss = (- log_prob_a * advantage.detach()).sum()
-            value_loss = (0.5 * ((v-returns.detach())**2)).sum()
-            entropy_loss = (probs * log_prob).sum()
-            
-            loss = policy_loss + self.value_loss_w * value_loss + self.entropy_loss_w * entropy_loss
-            self.optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.net.parameters(), 1)
-            self.optimizer.step()
+            actions = actions.detach()
+            advantage = advantage.detach()
+            log_prob_a_old = F.log_softmax(self.net(r, c)[0], dim=-1).gather(1, actions).detach()
+
+            for _ in range(self.n_epochs_episode):
+                policy, value = self.net(r, c)
+                prob = F.softmax(policy, dim=-1)
+                log_prob = F.log_softmax(policy, dim=-1)
+                log_prob_a = log_prob.gather(1, actions)
+                ratio = torch.exp(log_prob_a - log_prob_a_old)
+                surr1 = ratio * advantage
+                surr2 = torch.clamp(ratio, 1 - self.ppo_eps, 1 + self.ppo_eps) * advantage # 截断
+                policy_loss = torch.mean(-torch.min(surr1, surr2))
+                value_loss = F.mse_loss(value, returns.detach())
+                entropy_loss = (prob * log_prob).mean()
+                loss = policy_loss + self.value_loss_w * value_loss + self.entropy_loss_w * entropy_loss
+                self.optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.net.parameters(), 1)
+                self.optimizer.step()
             self.scheduler.step()
-            if i_episode % 500==0:
-                print(f"{i_episode=}")
-                self.env.visual_policy(self.get_policy())
+        
         print("final policy:")
         self.env.visual_policy(self.get_policy())
     

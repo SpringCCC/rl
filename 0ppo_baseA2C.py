@@ -102,6 +102,7 @@ class A2C(BaseAgent):
             transition_dict = self.processInfo(res)
             r, c, actions, returns, advantage = transition_dict['r'], transition_dict['c'], transition_dict['actions'], transition_dict['returns'], transition_dict['advantage']
             actions, returns, advantage = self._totensor_rcara([actions, returns, advantage], True)
+            actions = actions.detach()
             advantage = advantage.detach()
             log_prob_a_old = F.log_softmax(self.net(r, c)[0], dim=-1).gather(1, actions).detach()
 
@@ -124,9 +125,6 @@ class A2C(BaseAgent):
                 self.optimizer.step()
             self.scheduler.step()
         
-            # if i_episode % 100==0:
-            #     print(f"{i_episode=}")
-            #     self.env.visual_policy(self.get_policy())
         print("final policy:")
         self.env.visual_policy(self.get_policy())
     

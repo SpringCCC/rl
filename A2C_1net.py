@@ -15,7 +15,7 @@ class A2CNet(nn.Module):
         super(A2CNet, self).__init__()
         self.row_embed = nn.Embedding(env.n_row, hidden_dim)
         self.col_embed = nn.Embedding(env.n_col, hidden_dim)
-        self.backbone = nn.Sequential(nn.Linear(hidden_dim, hidden_dim*2), nn.ReLU(), nn.Linear(hidden_dim*2, hidden_dim*2), nn.ReLU())
+        self.backbone = nn.Sequential(nn.Linear(hidden_dim, hidden_dim*2), nn.ReLU())
         self.policy_head = nn.Sequential(nn.Linear(hidden_dim*2, env.n_action))
         self.value_head = nn.Sequential(nn.Linear(hidden_dim*2, 1))
         
@@ -28,8 +28,7 @@ class A2CNet(nn.Module):
         value = self.value_head(x)
         return policy, value
     
-    
-@sc_timing_consume()
+
 class A2C(BaseAgent):
     
     def __init__(self, env:Env):
@@ -41,90 +40,104 @@ class A2C(BaseAgent):
         self.n_episode = 10000
         self.optimizer = torch.optim.Adam(self.net.parameters(), lr=1e-3)
         self.max_dis = 50
-        self.value_loss_w = 0.5
-        self.entropy_loss_w = 0.1
+        self.value_loss_w = 0.1
+        self.entropy_loss_w = 1
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.n_episode, eta_min=1e-4)
         
     def take_action(self, r, c):
-        # self.net.eval()
         policy, value = self.net(r, c)
         action_dist = torch.distributions.Categorical(logits=policy)
         a = action_dist.sample()
-        # self.net.train()
-        return a.item()
-    
+        return a.item(), policy, value
+
     def processInfo(self, res):
-        out = [None] * (len(res) - 1)
         advantage = 0
         returns = res[-1][-1]
-        actions = [None] * (len(res) - 1)
+        transition_dict = {'r': [], 'c':[], 'actions': [], 'returns': [], 'advantage': []}
         for i in reversed(range(len(res)-1)):
             next_value = res[i+1][-1]
-            reward, a, p, v = res[i]
+            r, c, reward, a, p, v = res[i]
             delta = reward + self.gamma * next_value - v
+            
             advantage = delta + self.gamma * self.lamb * advantage
             returns = reward + self.gamma * returns
-            out[i] = p, v, returns, advantage
-            actions[i] =a
-        return map(lambda x:torch.cat(x, dim=0), zip(*out)), actions
+
+            transition_dict['r'].insert(0, r)
+            transition_dict['c'].insert(0, c)
+            transition_dict['actions'].insert(0, a)
+            transition_dict['returns'].insert(0, returns)
+            transition_dict['advantage'].insert(0, advantage)
+        
+        for k, v in transition_dict.items():
+            if k == "r"  or k=="c":
+                transition_dict[k] = totensor(v).long().detach()
+            elif k=='actions':
+                transition_dict[k] = totensor(v).long().reshape(-1, 1).detach()
+            else:
+                transition_dict[k] = torch.cat(v, dim=0).to(device).detach()
+
+        return transition_dict
     
+    @sc_timing_consume()
     def train_A2C(self):
         for i_episode in range(self.n_episode):
             self.env.reset()
-            self.optimizer.zero_grad()
             r, c = self.env.agent_pos[0], self.env.agent_pos[1]
             done = False
             res = []
             dis = 0
-            self.net.train()
             while not done:
-                a = self.take_action(r, c)
+                a, p, v = self.take_action(r, c)
                 nr, nc, reward, done = self.env.P[(r, c, a)]
-                p, v = self.net(r, c)
-                res.append([reward, a, p, v])
+                res.append([r, c, reward, a, p, v])
                 r, c = nr, nc
                 dis += 1
                 if dis>self.max_dis:
                     break
             p, v = self.net(r, c)
-            res.append([None, None, None, v*(1-done)])
-            (p, v, returns, advantage), a = self.processInfo(res)
-            # advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
-            
-            
-            a = totensor(a, dtype=torch.long)
+            res.append([None, None, None, None, None, v*(1-done)])
+            transition_dict = self.processInfo(res)
+            r, c, a, returns, advantage = transition_dict['r'], transition_dict['c'], transition_dict['actions'], transition_dict['returns'], transition_dict['advantage']
+            p, _ = self.net(r, c)
             probs = F.softmax(p, dim=-1)
             log_prob = F.log_softmax(p, dim=-1)
-            log_prob_a = log_prob.gather(1, a.detach().reshape(-1, 1))
+            log_prob_a = log_prob.gather(1, a)
             
-            policy_loss = (- log_prob_a * advantage.detach()).sum()
-            value_loss = (0.5 * ((v-returns.detach())**2)).sum()
+            policy_loss = (- log_prob_a * advantage).sum()
+            value_loss = (0.5 * ((v-returns)**2)).sum()
             entropy_loss = (probs * log_prob).sum()
+            
             loss = policy_loss + self.value_loss_w * value_loss + self.entropy_loss_w * entropy_loss
+            self.optimizer.zero_grad()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.net.parameters(), 1)
             self.optimizer.step()
             self.scheduler.step()
-            # if i_episode % 50==0:
+            # if i_episode % 500==0:
             #     print(f"{i_episode=}")
             #     self.env.visual_policy(self.get_policy())
-        # print("final policy:")
+        print("final policy:")
         self.env.visual_policy(self.get_policy())
     
     def get_policy(self):
-        self.net.eval()
-        index = np.asarray([[r, c] for r in range(self.env.n_row) for c in range(self.env.n_col)]).reshape(-1, 2)
-        policy, _ = self.net(index[:, 0], index[:, 1])
-        policy = policy.argmax(-1).reshape(self.env.n_row, self.env.n_col)
+        with torch.no_grad():
+            index = np.asarray([[r, c] for r in range(self.env.n_row) for c in range(self.env.n_col)]).reshape(-1, 2)
+            policy, _ = self.net(index[:, 0], index[:, 1])
+            policy = policy.argmax(-1).reshape(self.env.n_row, self.env.n_col)
         return toNumpy(policy)
-                
+    
+    def get_value(self):
+        with torch.no_grad():
+            index = np.asarray([[r, c] for r in range(self.env.n_row) for c in range(self.env.n_col)]).reshape(-1, 2)
+            _, v = self.net(index[:, 0], index[:, 1])
+            v = v[:, 0].reshape(self.env.n_row, self.env.n_col)
+        return toNumpy(v)
                 
         
 def main():
     env = Env()
     agent = A2C(env)
     agent.train_A2C()
-
 
 def loop():
     for i in range(100):

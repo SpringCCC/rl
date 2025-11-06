@@ -109,6 +109,7 @@ class PPO:
             ratio = torch.exp(log_probs - old_log_probs)
             surr1 = ratio * advantage
             surr2 = torch.clamp(ratio, 1 - self.eps, 1 + self.eps) * advantage  # 截断
+            
             actor_loss = torch.mean(-torch.min(surr1, surr2))  # PPO损失函数
             critic_loss = torch.mean(
                 F.mse_loss(self.critic(states), td_target.detach()))
