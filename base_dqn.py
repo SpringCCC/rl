@@ -95,7 +95,7 @@ class DQN_Agent(BaseAgent):
         super().__init__(env)
         self.n_episode = 2000
         self.minmal_data_size =1000
-        self.min_eps = 0
+        self.min_eps = 0.1
         self.max_eps = 1.0
         self.eps = self.max_eps
         self.eps_decay = 1/1000
@@ -153,6 +153,8 @@ class DQN_Agent(BaseAgent):
             ## one episode done, update/store params/state
             steps.append(n_steps)
             self.eps = max(self.min_eps, self.eps - (self.max_eps - self.min_eps) * self.eps_decay)
+            if i_episode > (self.n_episode -100):
+                self.eps = 0
             self.scheduler.step()
 
             avg_loss = np.mean(loss_1episode) if loss_1episode else 0
