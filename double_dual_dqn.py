@@ -79,14 +79,19 @@ class DQNet(nn.Module):
             nn.ReLU(), 
             nn.Linear(2*hidden_dim, hidden_dim*2), 
             nn.ReLU(),
-            nn.Linear(2*hidden_dim, env.n_action)
+            
             )
+        self.v_head = nn.Linear(2*hidden_dim, 1)
+        self.a_head = nn.Linear(2*hidden_dim, env.n_action)
 
     def forward(self, r, c):
         r = totensor(r, torch.long)
         c = totensor(c, torch.long)
         x = self.row_table(r) + self.col_table(c)
-        y = self.net(x)
+        x = self.net(x)
+        v = self.v_head(x)
+        a = self.a_head(x)
+        y = v + a - a.mean(dim=-1, keepdim=True)
         return y
 
 class DQN_Agent(BaseAgent):
@@ -162,8 +167,10 @@ class DQN_Agent(BaseAgent):
             self.writer.add_scalar("Score/episode", score_1episode, i_episode)
             self.writer.add_scalar("Epsilon", self.eps, i_episode)
             self.writer.add_scalar("LearningRate", self.optmizer.param_groups[0]['lr'], i_episode)
-            if i_episode%200==0:
-                self.save_policy(i_episode)
+            # if i_episode%200==0:
+            #     self.save_policy(i_episode)
+            print(f"第{i_episode}条epissode")
+            self.save_policy(i_episode)
         self.writer.close()
     
     def _compute_dqn_loss(self):
@@ -174,8 +181,10 @@ class DQN_Agent(BaseAgent):
         reward      = totensor(reward, torch.float32)
         action      = totensor(action, torch.long)
         done        = totensor(done, torch.float32)
-
-        target = reward + self.gamma * self.target_net(next_state[:, 0], next_state[:, 1]).max(dim=-1)[0] * (1-done)
+        target_action = self.main_net(next_state[:, 0], next_state[:, 1]).argmax(dim=1, keepdim=True)
+        next_q_value = self.target_net(next_state[:, 0], next_state[:, 1]).gather(1, target_action).detach()
+        target = reward + self.gamma * next_q_value[:, 0] * (1-done)
+        
         pred = self.main_net(state[:, 0], state[:, 1]).gather(1, action.reshape(-1, 1))
         loss = F.smooth_l1_loss(pred, target.reshape(-1, 1))
         return loss
